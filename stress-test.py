@@ -12,7 +12,8 @@ load_dotenv()
 # Splunk connection settings
 SPLUNK_HOST = os.getenv("SPLUNK_HOST", "your_splunk_host")
 SPLUNK_PORT = int(os.getenv("SPLUNK_PORT", "8089"))
-SPLUNK_TOKEN = os.getenv("SPLUNK_TOKEN")
+SPLUNK_USERNAME = os.getenv("SPLUNK_USERNAME")
+SPLUNK_PASSWORD = os.getenv("SPLUNK_PASSWORD")
 SPLUNK_APP = os.getenv("SPLUNK_APP", "search")
 
 # Shared state
@@ -25,24 +26,21 @@ url_options = []  # This will store our dynamic URLs
 async def fetch_splunk_paths():
     """Fetch paths from Splunk using token authentication"""
     try:
-        # Connect to Splunk using token
         service = client.connect(
             host=SPLUNK_HOST,
             port=SPLUNK_PORT,
-            token=SPLUNK_TOKEN,
-            app=SPLUNK_APP
+            username=SPLUNK_USERNAME,
+            password=SPLUNK_PASSWORD,
+            scheme='https'
         )
 
         # Run the search query
-        query = 'index="otel_logging" earliest=-1d | dedup path | table path | sort path'
-        kwargs = {"exec_mode": "normal"}
-        search_results = service.jobs.oneshot(query, **kwargs)
-
-        # Parse results
-        reader = results.ResultsReader(search_results)
+        query = 'search index="otel_logging" earliest=-1d | dedup path | table path | sort path'
+        job = service.jobs.create(query, exec_mode='blocking')
+        response = job.results(output_mode='json')
+        reader = results.JSONResultsReader(response)
         paths = [str(result['path']) for result in reader if isinstance(result, dict)]
 
-        # Create full URLs (modify this logic as needed)
         base_url = "http://home.dev.com"
         urls = [f"{base_url}{path}" for path in paths]
 
@@ -50,7 +48,7 @@ async def fetch_splunk_paths():
     except Exception as e:
         print(f'SPLUNK_HOST: {SPLUNK_HOST}')
         print(f'SPLUNK_PORT: {SPLUNK_PORT}')
-        print(f'SPLUNK_TOKEN: {SPLUNK_TOKEN}')
+        print(f'SPLUNK_USERNAME: {SPLUNK_USERNAME}')
         print(f'SPLUNK_APP: {SPLUNK_APP}')
         print(f"Error fetching paths from Splunk: {e}")
         return []
