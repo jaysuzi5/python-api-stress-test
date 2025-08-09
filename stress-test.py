@@ -2,6 +2,7 @@ import asyncio
 import os
 from nicegui import ui
 import requests
+import time
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import splunklib.client as client
@@ -97,7 +98,9 @@ with ui.column().classes('items-start ml-[50px] mt-6'):
 
         success_label = ui.label('Total Success: 0').classes('mb-2')
         failure_label = ui.label('Total Failures: 0').classes('mb-2')
-        status_label = ui.label('Status: IDLE').classes('text-lg font-bold text-gray-600 mb-6')
+        status_label = ui.label('Status: IDLE').classes('text-lg font-bold text-gray-600 mb-2')
+        time_label = ui.label('Total Time: 0m 0s').classes('mb-2')
+        tpm_label = ui.label('Transactions Per Minute: 0.00').classes('mb-6')
 
 # --- Buttons ---
 start_button = ui.button('Start Test', on_click=lambda: run_test()).classes('ml-[50px] mt-4')
@@ -127,21 +130,22 @@ def background_test(url: str, total_requests: int, num_threads: int):
 async def run_test():
     global success_count, failure_count, is_running
 
-    # Validate input
     if not url_input.value:
         ui.notify("Please select an API endpoint", type='negative')
         return
 
-    # Reset state for new run
     success_count = 0
     failure_count = 0
     is_running = True
 
-    # Update UI
     success_label.text = 'Total Success: 0'
     failure_label.text = 'Total Failures: 0'
     status_label.text = 'Status: RUNNING'
-    status_label.classes(replace='text-lg font-bold text-orange-600 mb-6')
+    status_label.classes(replace='text-lg font-bold text-orange-600 mb-2')
+    time_label.text = 'Total Time: 0m 0s'
+    time_label.classes(replace='text-lg font-normal text-orange-600 mb-2')
+    tpm_label.text = 'Transactions Per Minute: 0'
+    tpm_label.classes(replace='text-lg font-normal text-orange-600 mb-2')
     start_button.disable()
     refresh_button.disable()
 
@@ -158,22 +162,37 @@ async def run_test():
     stop_event = asyncio.Event()
     update_task = asyncio.create_task(update_ui_periodically(stop_event))
 
+    start_time = time.monotonic()
     try:
         await asyncio.to_thread(background_test, url, total, threads)
     except Exception as e:
         ui.notify(f"Test failed: {str(e)}", type='negative')
     finally:
+        end_time = time.monotonic()
+        elapsed = end_time - start_time
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        total_tx = success_count + failure_count
+        duration_minutes = elapsed / 60 if elapsed > 0 else 1
+        tpm = total_tx / duration_minutes
+
         stop_event.set()
         await update_task
 
         # Final update
         success_label.text = f'Total Success: {success_count}'
         failure_label.text = f'Total Failures: {failure_count}'
+        time_label.text = f'Total Time: {minutes}m {seconds}s'
+        time_label.classes(replace='text-lg font-bold text-green-600 mb-2')
+        tpm_label.text = f'Transactions Per Minute: {int(tpm):,}'
+        tpm_label.classes(replace='text-lg font-bold text-green-600 mb-2')
+
         status_label.text = 'Status: COMPLETE'
-        status_label.classes(replace='text-lg font-bold text-green-600 mb-6')
+        status_label.classes(replace='text-lg font-bold text-green-600 mb-2')
         is_running = False
         start_button.enable()
         refresh_button.enable()
+
 
 
 # Initialize the URL options when the app starts
