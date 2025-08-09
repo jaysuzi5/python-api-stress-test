@@ -20,6 +20,7 @@ SPLUNK_APP = os.getenv("SPLUNK_APP", "search")
 # Shared state
 success_count = 0
 failure_count = 0
+failure_details = []
 is_running = False
 url_options = []  # This will store our dynamic URLs
 
@@ -90,6 +91,8 @@ with ui.column().classes('items-start ml-[50px]'):
 
         request_input = ui.input('Number of Requests', value='1000').props('type=number').classes('mb-4 w-full')
         thread_input = ui.input('Number of Threads', value='10').props('type=number').classes('mb-6 w-full')
+        timeout_input = ui.input('Request Timeout (seconds)', value='5').props('type=number').classes(
+            'mb-6 w-full')  # NEW
 
 # --- Status Display ---
 with ui.column().classes('items-start ml-[50px] mt-6'):
@@ -106,29 +109,37 @@ with ui.column().classes('items-start ml-[50px] mt-6'):
 start_button = ui.button('Start Test', on_click=lambda: run_test()).classes('ml-[50px] mt-4')
 refresh_button = ui.button('Refresh Endpoints', on_click=lambda: initialize_url_options()).classes('ml-[50px] mt-4')
 
+# --- Failure Details Output ---
+failure_textarea = ui.textarea(
+    label="Failure Details",
+    placeholder="No failures yet...",
+    value=""
+).props('readonly').classes('ml-[50px] mt-4 w-[800px] h-[200px]')
 
 # --- Test Logic ---
-def call_endpoint(url: str):
-    global success_count, failure_count
+def call_endpoint(url: str, timeout: int):
+    global success_count, failure_count, failure_details
     try:
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=timeout)
         if 200 <= response.status_code < 400:
             success_count += 1
         else:
             failure_count += 1
-    except Exception:
+            failure_details.append(f"HTTP {response.status_code} - {url}")
+    except Exception as e:
         failure_count += 1
+        failure_details.append(f"Exception: {str(e)}")
 
 
-def background_test(url: str, total_requests: int, num_threads: int):
+def background_test(url: str, total_requests: int, num_threads: int, timeout: int):
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [executor.submit(call_endpoint, url) for _ in range(total_requests)]
+        futures = [executor.submit(call_endpoint, url, timeout) for _ in range(total_requests)]
         for future in as_completed(futures):
             future.result()
 
 
 async def run_test():
-    global success_count, failure_count, is_running
+    global success_count, failure_count, failure_details, is_running
 
     if not url_input.value:
         ui.notify("Please select an API endpoint", type='negative')
@@ -136,10 +147,12 @@ async def run_test():
 
     success_count = 0
     failure_count = 0
+    failure_details = []
     is_running = True
 
     success_label.text = 'Total Success: 0'
     failure_label.text = 'Total Failures: 0'
+    failure_textarea.value = ""
     status_label.text = 'Status: RUNNING'
     status_label.classes(replace='text-lg font-bold text-orange-600 mb-2')
     time_label.text = 'Total Time: 0m 0s'
@@ -152,6 +165,7 @@ async def run_test():
     url = url_input.value
     total = int(request_input.value)
     threads = int(thread_input.value)
+    timeout = int(timeout_input.value) if timeout_input.value else 5
 
     async def update_ui_periodically(stop_event_internal):
         while not stop_event_internal.is_set():
@@ -164,7 +178,7 @@ async def run_test():
 
     start_time = time.monotonic()
     try:
-        await asyncio.to_thread(background_test, url, total, threads)
+        await asyncio.to_thread(background_test, url, total, threads, timeout)
     except Exception as e:
         ui.notify(f"Test failed: {str(e)}", type='negative')
     finally:
@@ -189,9 +203,17 @@ async def run_test():
 
         status_label.text = 'Status: COMPLETE'
         status_label.classes(replace='text-lg font-bold text-green-600 mb-2')
+
+        # Show failure details in the textarea
+        if failure_details:
+            failure_textarea.value = "\n".join(failure_details)
+        else:
+            failure_textarea.value = "No failures."
+
         is_running = False
         start_button.enable()
         refresh_button.enable()
+
 
 
 
